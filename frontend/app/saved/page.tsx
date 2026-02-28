@@ -13,18 +13,20 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import {
-	Bookmark,
 	BookmarkCheck,
 	ExternalLink,
 	BrainCircuit,
+	BookmarkX,
+	Search,
 } from "lucide-react";
 
-// TypeScript interface based on our FastAPI backend response
-interface FeedItem {
+interface SavedItem {
 	id: string;
 	relevance_score: number;
 	is_saved: boolean;
+	created_at: string;
 	paper: {
 		arxiv_id: string;
 		title: string;
@@ -37,7 +39,6 @@ interface FeedItem {
 	};
 }
 
-/** Map source IDs to human-readable labels */
 function getSourceLabel(source?: string): string {
 	switch (source) {
 		case "semantic_scholar":
@@ -52,7 +53,6 @@ function getSourceLabel(source?: string): string {
 	}
 }
 
-/** Map source IDs to link text */
 function getSourceLinkText(source?: string): string {
 	switch (source) {
 		case "semantic_scholar":
@@ -67,75 +67,76 @@ function getSourceLinkText(source?: string): string {
 	}
 }
 
-export default function FeedPage() {
+export default function SavedPage() {
 	const { user, isLoaded } = useUser();
-	const [feed, setFeed] = useState<FeedItem[]>([]);
+	const [saved, setSaved] = useState<SavedItem[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
+	const [searchQuery, setSearchQuery] = useState("");
 
 	useEffect(() => {
-		const fetchFeed = async () => {
+		const fetchSaved = async () => {
 			if (!user) return;
 			try {
 				const res = await fetch(
-					`${process.env.NEXT_PUBLIC_API_URL}/feed/${user.id}`,
+					`${process.env.NEXT_PUBLIC_API_URL}/feed/${user.id}/saved`,
 				);
 				if (res.ok) {
 					const data = await res.json();
-					setFeed(data);
+					setSaved(data);
 				}
 			} catch (error) {
-				console.error("Failed to fetch feed:", error);
+				console.error("Failed to fetch saved papers:", error);
 			} finally {
 				setIsLoading(false);
 			}
 		};
 
 		if (isLoaded) {
-			fetchFeed();
+			fetchSaved();
 		}
 	}, [user, isLoaded]);
 
-	const toggleSave = async (feedItemId: string, currentStatus: boolean) => {
-		// Optimistic UI update for immediate feedback
-		setFeed(
-			feed.map((item) =>
-				item.id === feedItemId ? { ...item, is_saved: !currentStatus } : item,
-			),
-		);
-
+	const unsave = async (feedItemId: string) => {
+		setSaved(saved.filter((item) => item.id !== feedItemId));
 		try {
 			await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feed/${feedItemId}`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ is_saved: !currentStatus }),
+				body: JSON.stringify({ is_saved: false }),
 			});
 		} catch (error) {
-			console.error("Failed to update saved status:", error);
-			// Revert on failure (optional, but good practice)
-			setFeed(
-				feed.map((item) =>
-					item.id === feedItemId ? { ...item, is_saved: currentStatus } : item,
-				),
-			);
+			console.error("Failed to unsave paper:", error);
 		}
 	};
+
+	const filtered = saved.filter(
+		(item) =>
+			!searchQuery ||
+			item.paper.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			item.paper.authors.some((a) =>
+				a.toLowerCase().includes(searchQuery.toLowerCase()),
+			) ||
+			(item.paper.summary ?? "")
+				.toLowerCase()
+				.includes(searchQuery.toLowerCase()),
+	);
 
 	if (!isLoaded) return null;
 
 	return (
 		<div className="min-h-screen bg-zinc-50 dark:bg-black">
-			{/* Simple Navigation Bar */}
+			{/* Navigation Bar */}
 			<header className="border-b bg-white dark:bg-zinc-950 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
 				<div className="flex items-center gap-6">
 					<h1 className="text-xl font-bold tracking-tight">PaperPulse</h1>
 					<nav className="hidden sm:flex gap-4 text-sm font-medium text-zinc-600 dark:text-zinc-400">
-						<Link href="/feed" className="text-black dark:text-white">
-							Daily Feed
-						</Link>
 						<Link
-							href="/saved"
+							href="/feed"
 							className="hover:text-black dark:hover:text-white transition"
 						>
+							Daily Feed
+						</Link>
+						<Link href="/saved" className="text-black dark:text-white">
 							Saved
 						</Link>
 						<Link
@@ -150,14 +151,26 @@ export default function FeedPage() {
 			</header>
 
 			<main className="max-w-4xl mx-auto py-8 px-4 sm:px-6">
-				<div className="mb-8">
-					<h2 className="text-3xl font-semibold tracking-tight">
-						Your Daily Digest
-					</h2>
-					<p className="text-zinc-500 mt-2">
-						AI-curated from ArXiv, Semantic Scholar, PubMed &amp; OpenAlex —
-						ranked by your research interests.
-					</p>
+				<div className="mb-8 flex flex-col sm:flex-row sm:items-end gap-4 justify-between">
+					<div>
+						<h2 className="text-3xl font-semibold tracking-tight">
+							Saved Articles
+						</h2>
+						<p className="text-zinc-500 mt-2">
+							Your bookmarked research papers — {saved.length} saved.
+						</p>
+					</div>
+					{saved.length > 0 && (
+						<div className="relative w-full sm:w-64">
+							<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+							<Input
+								placeholder="Search saved papers…"
+								value={searchQuery}
+								onChange={(e) => setSearchQuery(e.target.value)}
+								className="pl-9"
+							/>
+						</div>
+					)}
 				</div>
 
 				{/* Loading State */}
@@ -178,22 +191,35 @@ export default function FeedPage() {
 				)}
 
 				{/* Empty State */}
-				{!isLoading && feed.length === 0 && (
+				{!isLoading && saved.length === 0 && (
 					<div className="text-center py-24 border-2 border-dashed rounded-xl">
-						<BrainCircuit className="mx-auto h-12 w-12 text-zinc-300 mb-4" />
-						<h3 className="text-lg font-medium">
-							No papers match your interests today.
-						</h3>
-						<p className="text-zinc-500">
-							Check back tomorrow after the nightly pipeline runs!
+						<BookmarkCheck className="mx-auto h-12 w-12 text-zinc-300 mb-4" />
+						<h3 className="text-lg font-medium">No saved papers yet.</h3>
+						<p className="text-zinc-500 mt-1">
+							Bookmark papers from your{" "}
+							<Link href="/feed" className="text-blue-600 underline">
+								Daily Feed
+							</Link>{" "}
+							to see them here.
 						</p>
 					</div>
 				)}
 
-				{/* Feed List */}
-				{!isLoading && feed.length > 0 && (
+				{/* No search results */}
+				{!isLoading && saved.length > 0 && filtered.length === 0 && (
+					<div className="text-center py-16 border-2 border-dashed rounded-xl">
+						<Search className="mx-auto h-10 w-10 text-zinc-300 mb-3" />
+						<h3 className="text-lg font-medium">No matching papers.</h3>
+						<p className="text-zinc-500 mt-1">
+							Try a different search term.
+						</p>
+					</div>
+				)}
+
+				{/* Saved List */}
+				{!isLoading && filtered.length > 0 && (
 					<div className="space-y-6">
-						{feed.map((item) => (
+						{filtered.map((item) => (
 							<Card
 								key={item.id}
 								className="w-full shadow-sm hover:shadow-md transition-shadow"
@@ -242,19 +268,10 @@ export default function FeedPage() {
 									<Button
 										variant="ghost"
 										size="sm"
-										className="gap-2"
-										onClick={() => toggleSave(item.id, item.is_saved)}
+										className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+										onClick={() => unsave(item.id)}
 									>
-										{item.is_saved ? (
-											<>
-												<BookmarkCheck className="h-4 w-4 text-blue-600" />{" "}
-												Saved
-											</>
-										) : (
-											<>
-												<Bookmark className="h-4 w-4" /> Save Paper
-											</>
-										)}
+										<BookmarkX className="h-4 w-4" /> Unsave
 									</Button>
 									<Button variant="outline" size="sm" asChild className="gap-2">
 										<a
